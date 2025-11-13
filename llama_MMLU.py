@@ -205,21 +205,24 @@ for title in titles_to_test:
 
         prompts = [format_prompt_with_context(context_text, item["question"], item["choices"]) for item in dataset]
         all_outputs = []
-        # for i in range(0, len(prompts), BATCH_SIZE):
-        #     batch_prompts = prompts[i:i+BATCH_SIZE]
-        #     batch_outputs = generator(batch_prompts, max_new_tokens=MAX_TOKENS, do_sample=False)
-        #     for out in batch_outputs:
-        #         if isinstance(out, list):
-        #             all_outputs.extend(out)
-        #         else:
-        #             all_outputs.append(out)
+        for i in range(0, len(prompts), BATCH_SIZE):
+            batch_prompts = prompts[i:i+BATCH_SIZE]
+            batch_outputs = generator(batch_prompts, max_new_tokens=MAX_TOKENS, do_sample=False)
+            for out in batch_outputs:
+                if isinstance(out, list):
+                    all_outputs.extend(out)
+                else:
+                    all_outputs.append(out)
 
-        all_outputs = generator(
-            prompts,
-            max_new_tokens=MAX_TOKENS,
-            batch_size=BATCH_SIZE,   # let the pipeline split internally
-            do_sample=False
-        )
+        # The batching above is what i had before, which speeds it up a bit but it is still too slow.
+        # The problem is the batches are done sequentially. So I treid the method below but now i get GPU out of memory errors. 
+
+        # all_outputs = generator(
+        #     prompts,
+        #     max_new_tokens=MAX_TOKENS,
+        #     batch_size=BATCH_SIZE,   # let the pipeline split internally
+        #     do_sample=False
+        # )
 
         correct = 0
         total = 0
