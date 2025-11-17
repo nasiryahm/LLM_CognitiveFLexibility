@@ -20,6 +20,7 @@ import time
 from datetime import datetime
 import os
 from tqdm import tqdm
+import torch
 
 # Set permanent cache directories
 CACHE_DIR = "/scratch/fast/huggingface_cache"
@@ -54,9 +55,9 @@ model_name = "meta-llama/Llama-2-13b-chat-hf"
 test_name = "cais/mmlu"
 
 CACHE_DIR = "/scratch/fast/huggingface_cache"
-MAX_TOKENS = 10
+MAX_TOKENS = 5
 NUM_TEST = 1000
-BATCH_SIZE = 100
+BATCH_SIZE = 15  # Reduced to avoid OOM, increase gradually if possible
 SEED = 28
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=CACHE_DIR)
@@ -263,24 +264,14 @@ for title in titles_to_test:
             desc="Processing batches",
         ):
             batch_prompts = prompts[i : i + BATCH_SIZE]
-            batch_outputs = generator(
-                batch_prompts, max_new_tokens=MAX_TOKENS, do_sample=False
-            )
-            for out in batch_outputs:
-                if isinstance(out, list):
-                    all_outputs.extend(out)
-                else:
-                    all_outputs.append(out)
-
-        # The batching above is what i had before, which speeds it up a bit but it is still too slow.
-        # The problem is the batches are done sequentially. So I treid the method below but now i get GPU out of memory errors.
-
-        # all_outputs = generator(
-        #     prompts,
-        #     max_new_tokens=MAX_TOKENS,
-        #     batch_size=BATCH_SIZE,
-        #     do_sample=False
-        # )
+            with torch.inference_mode():
+                batch_outputs = generator(
+                    batch_prompts,
+                    max_new_tokens=MAX_TOKENS,
+                    batch_size=len(batch_prompts),
+                    do_sample=False,
+                )
+            all_outputs.extend(batch_outputs)
 
         correct = 0
         total = 0
