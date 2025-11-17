@@ -9,7 +9,6 @@
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
-    pipeline,
     BitsAndBytesConfig,
 )
 from datasets import load_dataset
@@ -57,10 +56,11 @@ test_name = "cais/mmlu"
 CACHE_DIR = "/scratch/fast/huggingface_cache"
 MAX_TOKENS = 5
 NUM_TEST = 1000
-BATCH_SIZE = 15  # Reduced to avoid OOM, increase gradually if possible
+BATCH_SIZE = 5  # Reduced to avoid OOM, increase gradually if possible
 SEED = 28
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=CACHE_DIR)
+tokenizer.padding_side = "left"
 
 quantization_config = BitsAndBytesConfig(load_in_8bit=True)
 
@@ -74,11 +74,6 @@ model = AutoModelForCausalLM.from_pretrained(
 
 tokenizer.pad_token_id = tokenizer.eos_token_id
 model.config.pad_token_id = tokenizer.eos_token_id
-
-
-generator = pipeline(
-    "text-generation", model=model, tokenizer=tokenizer, device_map=None
-)
 
 subjects = [
     "abstract_algebra",
@@ -264,14 +259,20 @@ for title in titles_to_test:
             desc="Processing batches",
         ):
             batch_prompts = prompts[i : i + BATCH_SIZE]
+            batch_inputs = tokenizer(
+                batch_prompts, return_tensors="pt", padding=True, truncation=True
+            ).to(model.device)
             with torch.inference_mode():
-                batch_outputs = generator(
-                    batch_prompts,
+                batch_outputs = model.generate(
+                    **batch_inputs,
                     max_new_tokens=MAX_TOKENS,
-                    batch_size=len(batch_prompts),
                     do_sample=False,
+                    pad_token_id=tokenizer.pad_token_id,
                 )
-            all_outputs.extend(batch_outputs)
+            decoded_outputs = tokenizer.batch_decode(
+                batch_outputs, skip_special_tokens=True
+            )
+            all_outputs.extend([{"generated_text": out} for out in decoded_outputs])
 
         correct = 0
         total = 0
