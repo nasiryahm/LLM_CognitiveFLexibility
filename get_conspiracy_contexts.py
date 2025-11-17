@@ -27,28 +27,29 @@ snippets = df["snippet"].dropna().tolist()
 # Set random seed for repeatability
 random.seed(42)
 
-# Select a random sample of 100 snippets
-if len(snippets) > 100:
-    snippets = random.sample(snippets, 100)
+# Shuffle all snippets for random selection
+random.shuffle(snippets)
 
-num_snippets = len(snippets)
+num_snippets = 0
+max_snippets = 100
 
-with open("contexts_conspiracy.csv", "w", newline="", encoding="utf-8") as csvfile:
+with open("contexts_conspiracy.csv", "a", newline="", encoding="utf-8") as csvfile:
     writer = csv.writer(csvfile)
-    for i, snippet in enumerate(snippets):
+    for snippet in snippets:
+        if num_snippets >= max_snippets:
+            break
         # Clean the snippet: replace newlines with spaces, strip
         snippet = snippet.replace("\n", " ").strip()
-        if len(snippet) > 1000:
-            snippet = snippet[:1000]
-        if snippet:  # Only add if there's content
-            title = f"conspiracy_{i+1}"
+        if 400 <= len(snippet) <= 600:
+            title = f"conspiracy_{num_snippets+1}"
             writer.writerow([title, "clean", snippet])
             ms = context_creator.meaningful_shuffle(snippet)
             writer.writerow([title, "meaningful_shuffle", ms])
             ws = context_creator.word_shuffle(snippet)
             writer.writerow([title, "word_shuffle", ws])
             cs = context_creator.character_shuffle(snippet)
-            writer.writerow([title, "char_shuffle", cs])
-            print(f"Added snippet {i+1}: {title}")
+            writer.writerow([title, "character_shuffle", cs])
+            print(f"Added snippet {num_snippets+1}: {title}")
+            num_snippets += 1
 
 print(f"Finished adding {num_snippets} snippets.")
