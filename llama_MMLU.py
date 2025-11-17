@@ -44,7 +44,12 @@ parser.add_argument(
     "--contexts_file",
     type=str,
     default="contexts_wikipedia.csv",
-    choices=["contexts_wikipedia.csv", "contexts_conspiracy.csv"],
+    choices=[
+        "contexts_wikipedia.csv",
+        "contexts_conspiracy.csv",
+        "contexts_isot_fake.csv",
+        "contexts_isot_true.csv"
+    ],
     help="Contexts file to use (default: contexts_wikipedia.csv)",
 )
 args = parser.parse_args()
@@ -77,7 +82,10 @@ cache_mmlu_dataset()
 
 start = time.time()
 
-model_name = "meta-llama/Llama-2-13b-chat-hf"
+# model_name = "meta-llama/Llama-2-13b-chat-hf"
+# model_name = "Qwen/Qwen2.5-7B"
+# model_name = "google/gemma-2-9b"
+model_name = "Qwen/Qwen3-8B"
 test_name = "cais/mmlu"
 
 CACHE_DIR = "/scratch/fast/huggingface_cache"
@@ -206,8 +214,9 @@ def format_prompt_with_context(
         formatted_choices.append(formatted_choice)
     choices_str = "\n".join(formatted_choices)
     return (
+        f"Read this coming text very carefully: \n\n"
         f"{context_text}\n\n"
-        f"For the following question, answer ONLY with a single letter (A, B, C, or D):\n\n"
+        f"Okay, and now, with all of that in mind, for the following question. Answer ONLY with a single letter (A, B, C, or D):\n\n"
         f"Question: {question}\n\n"
         f"Choices:\n{choices_str}\n\n"
         "Answer ONLY with a single letter (A, B, C, or D) \n"
@@ -260,12 +269,16 @@ print(
     f"Processing chunk {args.chunk}: {len(titles_to_test)} contexts (indices {start_idx} to {end_idx-1}) out of {total_titles} total on device {args.device}"
 )
 
-context_types = ["clean"]
+context_types = ["word_shuffle", "meaningful_shuffle", "clean"]
 
 if args.contexts_file == "contexts_conspiracy.csv":
     csv_results = "results_conspiracy.csv"
 elif args.contexts_file == "contexts_wikipedia.csv":
     csv_results = "results_wikipedia.csv"
+elif args.contexts_file == "contexts_isot_fake.csv":
+    csv_results = "results_isot_fake.csv"
+elif args.contexts_file == "contexts_isot_true.csv":
+    csv_results = "results_isot_true.csv"
 file_exists = os.path.exists(csv_results)
 
 # Load existing results to avoid re-processing
@@ -276,20 +289,26 @@ if file_exists:
         for row in reader:
             title = row["context_title"]
             ctype = row["context_type"]
+            model_name_csv = row["model_name"]
             if title not in existing_results:
                 existing_results[title] = {}
-            existing_results[title][ctype] = float(row["accuracy"])
+            if ctype not in existing_results[title]:
+                existing_results[title][ctype] = {}
+            existing_results[title][ctype][model_name_csv] = float(row["accuracy"])
 
 accuracy_dict = {
     title: {ctype: 0.0 for ctype in context_types} for title in titles_to_test
 }
 
-# Populate accuracy_dict with existing results
+# Populate accuracy_dict with existing results for this model
 for title in titles_to_test:
     if title in existing_results:
         for ctype in context_types:
-            if ctype in existing_results[title]:
-                accuracy_dict[title][ctype] = existing_results[title][ctype]
+            if (
+                ctype in existing_results[title]
+                and model_name in existing_results[title][ctype]
+            ):
+                accuracy_dict[title][ctype] = existing_results[title][ctype][model_name]
 
 for title in titles_to_test:
     if title not in contexts:
@@ -299,9 +318,13 @@ for title in titles_to_test:
         if ctype not in contexts[title]:
             print(f"{ctype} not found in {title}")
             continue
-        # Skip if already processed
-        if title in existing_results and ctype in existing_results[title]:
-            print(f"Skipping {title} | {ctype}: already processed")
+        # Skip if already processed for this model
+        if (
+            title in existing_results
+            and ctype in existing_results[title]
+            and model_name in existing_results[title][ctype]
+        ):
+            print(f"Skipping {title} | {ctype} | {model_name}: already processed")
             continue
         context_text = contexts[title][ctype]
 
