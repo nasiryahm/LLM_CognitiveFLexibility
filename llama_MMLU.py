@@ -1,12 +1,17 @@
-# Feedback from Nas: 
-# AIM: try to reduce the time taken to run MMLU 
-# - Probably would run a lot faster if you construct a dataset or list of questions to be processed in parallel # - Maybe also look at whether you can run the context once into the LLM and then save the state (don't spend too long on this) 
-# # AIM: We want to know that improvements are not just random chance 
-# - Make sure the outputs are deterministic (i.e. that you get exactly the same response if you re-run the model) 
-# - Save the random seed you are using to select questions # 
+# Feedback from Nas:
+# AIM: try to reduce the time taken to run MMLU
+# - Probably would run a lot faster if you construct a dataset or list of questions to be processed in parallel # - Maybe also look at whether you can run the context once into the LLM and then save the state (don't spend too long on this)
+# # AIM: We want to know that improvements are not just random chance
+# - Make sure the outputs are deterministic (i.e. that you get exactly the same response if you re-run the model)
+# - Save the random seed you are using to select questions #
 # AIM: Have a clean structure for loading contexts (and testing them)
 
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    pipeline,
+    BitsAndBytesConfig,
+)
 from datasets import load_dataset
 import csv
 import re
@@ -14,6 +19,34 @@ import random
 import time
 from datetime import datetime
 import os
+from tqdm import tqdm
+
+# Set permanent cache directories
+CACHE_DIR = "/scratch/fast/huggingface_cache"
+DATASETS_CACHE_DIR = "/scratch/fast/huggingface_datasets_cache"
+
+# Ensure cache directories exist
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(DATASETS_CACHE_DIR, exist_ok=True)
+
+# Set environment variables for permanent caching
+os.environ["HF_DATASETS_CACHE"] = DATASETS_CACHE_DIR
+os.environ["HF_HOME"] = CACHE_DIR
+
+
+# Pre-download and cache the MMLU dataset permanently
+def cache_mmlu_dataset():
+    """Pre-download and cache the MMLU dataset to avoid repeated downloads."""
+    try:
+        print("Checking/caching MMLU dataset...")
+        load_dataset("cais/mmlu", "all", split="test", cache_dir=DATASETS_CACHE_DIR)
+        print("MMLU dataset cached successfully!")
+    except Exception as e:
+        print(f"Warning: Could not cache dataset: {e}")
+
+
+# Cache the dataset (run once to ensure permanent caching)
+cache_mmlu_dataset()
 
 start = time.time()
 
@@ -21,17 +54,19 @@ model_name = "meta-llama/Llama-2-13b-chat-hf"
 test_name = "cais/mmlu"
 
 CACHE_DIR = "/scratch/fast/huggingface_cache"
-MAX_TOKENS = 30
-NUM_TEST = 10
-BATCH_SIZE = 2
+MAX_TOKENS = 10
+NUM_TEST = 1000
+BATCH_SIZE = 100
 SEED = 28
 
 tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=CACHE_DIR)
 
+quantization_config = BitsAndBytesConfig(load_in_8bit=True)
+
 model = AutoModelForCausalLM.from_pretrained(
     model_name,
     device_map="auto",
-    dtype="auto",
+    quantization_config=quantization_config,
     low_cpu_mem_usage=True,
     cache_dir=CACHE_DIR,
 )
@@ -105,18 +140,22 @@ subjects = [
 ]
 
 all_data = []
-for subject in subjects:
-    ds = load_dataset("cais/mmlu", subject, split="test")
-    all_data.extend(ds)
+print("Loading MMLU dataset...")
+ds = load_dataset("cais/mmlu", "all", split="test", cache_dir=DATASETS_CACHE_DIR)
+print(f"Dataset loaded with {len(ds)} total examples")
+
+for subject in tqdm(subjects, desc="Filtering subjects"):
+    subject_data = ds.filter(lambda x: x["subject"] == subject)
+    all_data.extend(subject_data)
 
 
-
-#dataset = all_data
+# dataset = all_data
 
 random.seed(SEED)
-#random.shuffle(all_data)
+# random.shuffle(all_data)
 dataset = random.sample(all_data, NUM_TEST)
-#dataset = all_data
+# dataset = all_data
+
 
 def format_prompt_mmlu(question: str, choices: list[str]) -> str:
     formatted_choices = []
@@ -133,7 +172,10 @@ def format_prompt_mmlu(question: str, choices: list[str]) -> str:
         "Answer:"
     )
 
-def format_prompt_with_context(context_text: str, question: str, choices: list[str]) -> str:
+
+def format_prompt_with_context(
+    context_text: str, question: str, choices: list[str]
+) -> str:
     formatted_choices = []
     for i, possible_answer in enumerate(choices):
         answer_letter = chr(65 + i)
@@ -149,12 +191,14 @@ def format_prompt_with_context(context_text: str, question: str, choices: list[s
         "Answer:"
     )
 
+
 def extract_mc_answer(output_text: str) -> str:
     text = output_text.upper()
     match = re.search(r"ANSWER:\s*([A-D])", text)
     if match:
         return match.group(1)
     return ""
+
 
 contexts_file = "contexts.csv"
 contexts = {}
@@ -170,7 +214,7 @@ with open(contexts_file, newline="", encoding="utf-8") as f:
 
 titles_to_test = ["Astar_(game)"]
 
-#titles_to_test = ["Astar_(game)", "Kingsley_Halt_railway_station", "Epinotia_nemorivaga", "Legal_separation", "Neutral_lipid_storage_disease", "Empty_context"]
+# titles_to_test = ["Astar_(game)", "Kingsley_Halt_railway_station", "Epinotia_nemorivaga", "Legal_separation", "Neutral_lipid_storage_disease", "Empty_context"]
 context_types = ["clean"]
 
 csv_fullanswers = "mmlu_results_eval.csv"
@@ -191,7 +235,9 @@ with open(csv_fullanswers, "w", newline="", encoding="utf-8") as f_full:
     )
     full_writer.writeheader()
 
-accuracy_dict = {title: {ctype: 0.0 for ctype in context_types} for title in titles_to_test}
+accuracy_dict = {
+    title: {ctype: 0.0 for ctype in context_types} for title in titles_to_test
+}
 
 for title in titles_to_test:
     if title not in contexts:
@@ -203,11 +249,23 @@ for title in titles_to_test:
             continue
         context_text = contexts[title][ctype]
 
-        prompts = [format_prompt_with_context(context_text, item["question"], item["choices"]) for item in dataset]
+        print(f"Processing title: {title} with context type: {ctype}")
+
+        prompts = [
+            format_prompt_with_context(context_text, item["question"], item["choices"])
+            for item in dataset
+        ]
         all_outputs = []
-        for i in range(0, len(prompts), BATCH_SIZE):
-            batch_prompts = prompts[i:i+BATCH_SIZE]
-            batch_outputs = generator(batch_prompts, max_new_tokens=MAX_TOKENS, do_sample=False)
+        total_batches = (len(prompts) + BATCH_SIZE - 1) // BATCH_SIZE
+        for i in tqdm(
+            range(0, len(prompts), BATCH_SIZE),
+            total=total_batches,
+            desc="Processing batches",
+        ):
+            batch_prompts = prompts[i : i + BATCH_SIZE]
+            batch_outputs = generator(
+                batch_prompts, max_new_tokens=MAX_TOKENS, do_sample=False
+            )
             for out in batch_outputs:
                 if isinstance(out, list):
                     all_outputs.extend(out)
@@ -215,7 +273,7 @@ for title in titles_to_test:
                     all_outputs.append(out)
 
         # The batching above is what i had before, which speeds it up a bit but it is still too slow.
-        # The problem is the batches are done sequentially. So I treid the method below but now i get GPU out of memory errors. 
+        # The problem is the batches are done sequentially. So I treid the method below but now i get GPU out of memory errors.
 
         # all_outputs = generator(
         #     prompts,
@@ -228,7 +286,18 @@ for title in titles_to_test:
         total = 0
 
         with open(csv_fullanswers, "a", newline="", encoding="utf-8") as f_full:
-            writer = csv.DictWriter(f_full, fieldnames=["subject", "context_title", "context_type", "question", "model_output", "model_answer", "reference_answer"])
+            writer = csv.DictWriter(
+                f_full,
+                fieldnames=[
+                    "subject",
+                    "context_title",
+                    "context_type",
+                    "question",
+                    "model_output",
+                    "model_answer",
+                    "reference_answer",
+                ],
+            )
             for i, item in enumerate(dataset):
                 model_output = all_outputs[i]["generated_text"]
                 extracted_answer = extract_mc_answer(model_output)
@@ -236,7 +305,7 @@ for title in titles_to_test:
                 if extracted_answer == reference_answer:
                     correct += 1
                 total += 1
-                
+
                 """
                 writer.writerow(
                     {
@@ -257,12 +326,30 @@ for title in titles_to_test:
 with open(csv_results, "a", newline="", encoding="utf-8") as f:
     writer = csv.writer(f)
     if not file_exists:
-        headers = ["timestamp", "model_name", "test_name", "context_title", "context_type", "accuracy", "seed"]
+        headers = [
+            "timestamp",
+            "model_name",
+            "test_name",
+            "context_title",
+            "context_type",
+            "accuracy",
+            "seed",
+        ]
         writer.writerow(headers)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     for title, cdict in accuracy_dict.items():
         for ctype, acc in cdict.items():
-            writer.writerow([timestamp, model_name, "MMLU_selected_subjects", title, ctype, f"{acc:.3f}", SEED])
+            writer.writerow(
+                [
+                    timestamp,
+                    model_name,
+                    "MMLU_selected_subjects",
+                    title,
+                    ctype,
+                    f"{acc:.3f}",
+                    SEED,
+                ]
+            )
 
 end = time.time()
 how_long = end - start
