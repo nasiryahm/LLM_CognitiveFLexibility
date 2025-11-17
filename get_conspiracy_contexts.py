@@ -33,7 +33,7 @@ if len(snippets) > 100:
 
 num_snippets = len(snippets)
 
-with open("context_negative.csv", "w", newline="", encoding="utf-8") as csvfile:
+with open("contexts_conspiracy.csv", "w", newline="", encoding="utf-8") as csvfile:
     writer = csv.writer(csvfile)
     for i, snippet in enumerate(snippets):
         # Clean the snippet: replace newlines with spaces, strip

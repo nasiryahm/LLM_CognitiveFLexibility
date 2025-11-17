@@ -18,6 +18,7 @@ import random
 import time
 from datetime import datetime
 import os
+import fcntl
 from tqdm import tqdm
 import torch
 import argparse
@@ -38,6 +39,13 @@ parser.add_argument(
 )
 parser.add_argument(
     "--device", type=int, default=0, help="CUDA device ID to use (default: 0)"
+)
+parser.add_argument(
+    "--contexts_file",
+    type=str,
+    default="contexts.csv",
+    choices=["contexts.csv", "contexts_conspiracy.csv"],
+    help="Contexts file to use (default: contexts.csv)",
 )
 args = parser.parse_args()
 
@@ -215,7 +223,7 @@ def extract_mc_answer(output_text: str) -> str:
     return ""
 
 
-contexts_file = "contexts.csv"
+contexts_file = args.contexts_file
 contexts = {}
 with open(contexts_file, newline="", encoding="utf-8") as f:
     reader = csv.DictReader(f)
@@ -258,6 +266,18 @@ csv_fullanswers = "mmlu_results_eval.csv"
 csv_results = "results.csv"
 file_exists = os.path.exists(csv_results)
 
+# Load existing results to avoid re-processing
+existing_results = {}
+if file_exists:
+    with open(csv_results, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            title = row["context_title"]
+            ctype = row["context_type"]
+            if title not in existing_results:
+                existing_results[title] = {}
+            existing_results[title][ctype] = float(row["accuracy"])
+
 with open(csv_fullanswers, "w", newline="", encoding="utf-8") as f_full:
     full_writer = csv.DictWriter(
         f_full,
@@ -276,6 +296,13 @@ accuracy_dict = {
     title: {ctype: 0.0 for ctype in context_types} for title in titles_to_test
 }
 
+# Populate accuracy_dict with existing results
+for title in titles_to_test:
+    if title in existing_results:
+        for ctype in context_types:
+            if ctype in existing_results[title]:
+                accuracy_dict[title][ctype] = existing_results[title][ctype]
+
 for title in titles_to_test:
     if title not in contexts:
         print(f"{title} not found")
@@ -283,6 +310,10 @@ for title in titles_to_test:
     for ctype in context_types:
         if ctype not in contexts[title]:
             print(f"{ctype} not found in {title}")
+            continue
+        # Skip if already processed
+        if title in existing_results and ctype in existing_results[title]:
+            print(f"Skipping {title} | {ctype}: already processed")
             continue
         context_text = contexts[title][ctype]
 
@@ -356,22 +387,23 @@ for title in titles_to_test:
         accuracy_dict[title][ctype] = accuracy
         print(f"{title} | {ctype}: {correct}/{total} correct ({accuracy:.3f})")
 
-with open(csv_results, "a", newline="", encoding="utf-8") as f:
-    writer = csv.writer(f)
-    if not file_exists:
-        headers = [
-            "timestamp",
-            "model_name",
-            "test_name",
-            "context_title",
-            "context_type",
-            "accuracy",
-            "seed",
-        ]
-        writer.writerow(headers)
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    for title, cdict in accuracy_dict.items():
-        for ctype, acc in cdict.items():
+        # Write to CSV immediately
+        with open(csv_results, "a+", newline="", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            writer = csv.writer(f)
+            if f.tell() == 0:  # File is empty, write headers
+                headers = [
+                    "timestamp",
+                    "model_name",
+                    "test_name",
+                    "context_title",
+                    "context_type",
+                    "accuracy",
+                    "seed",
+                ]
+                writer.writerow(headers)
+            # Write the row
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             writer.writerow(
                 [
                     timestamp,
@@ -379,10 +411,11 @@ with open(csv_results, "a", newline="", encoding="utf-8") as f:
                     "MMLU_selected_subjects",
                     title,
                     ctype,
-                    f"{acc:.3f}",
+                    f"{accuracy:.3f}",
                     SEED,
                 ]
             )
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 end = time.time()
 how_long = end - start
