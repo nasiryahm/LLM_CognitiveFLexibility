@@ -48,7 +48,7 @@ parser.add_argument(
         "contexts_wikipedia.csv",
         "contexts_conspiracy.csv",
         "contexts_isot_fake.csv",
-        "contexts_isot_true.csv"
+        "contexts_isot_true.csv",
     ],
     help="Contexts file to use (default: contexts_wikipedia.csv)",
 )
@@ -82,7 +82,7 @@ cache_mmlu_dataset()
 
 start = time.time()
 
-# model_name = "meta-llama/Llama-2-13b-chat-hf"
+# model_name = "meta-llama/Llama-3.1-8B"
 # model_name = "Qwen/Qwen2.5-7B"
 # model_name = "google/gemma-2-9b"
 model_name = "Qwen/Qwen3-8B"
@@ -269,7 +269,7 @@ print(
     f"Processing chunk {args.chunk}: {len(titles_to_test)} contexts (indices {start_idx} to {end_idx-1}) out of {total_titles} total on device {args.device}"
 )
 
-context_types = ["word_shuffle", "meaningful_shuffle", "clean"]
+context_types = ["clean", "meaningful_shuffle"]
 
 if args.contexts_file == "contexts_conspiracy.csv":
     csv_results = "results_conspiracy.csv"

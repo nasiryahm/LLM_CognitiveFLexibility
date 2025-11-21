@@ -5,11 +5,11 @@ import random
 
 # Load the ISOT fake news datasets
 try:
-    df_fake = pd.read_csv("Fake.csv")
-    df_true = pd.read_csv("True.csv")
+    df_fake = pd.read_csv("datasets/ISOT/Fake.csv")
+    df_true = pd.read_csv("datasets/ISOT/True.csv")
     # Add labels
-    df_fake['label'] = 'fake'
-    df_true['label'] = 'real'
+    df_fake["label"] = "fake"
+    df_true["label"] = "real"
 except Exception as e:
     print(f"Error loading datasets: {e}")
     print("Make sure the CSV files are in the current directory")
@@ -19,16 +19,16 @@ except Exception as e:
 # Function to process a dataset
 def process_dataset(df, label, output_file):
     snippets = df["text"].dropna().tolist()
-    
+
     # Set random seed for repeatability
     random.seed(42)
-    
+
     # Shuffle snippets for random selection
     random.shuffle(snippets)
-    
+
     num_snippets = 0
-    max_snippets = 100
-    
+    max_snippets = 500
+
     with open(output_file, "a", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
         for snippet in snippets:
@@ -47,7 +47,7 @@ def process_dataset(df, label, output_file):
                 writer.writerow([title, "character_shuffle", cs])
                 print(f"Added {label} snippet {num_snippets+1}: {title}")
                 num_snippets += 1
-    
+
     print(f"Finished adding {num_snippets} {label} snippets to {output_file}.")
 
 
